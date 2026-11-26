@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}{{ day.date }} 日档 · 污水排放整升日档{% endblock %}
+{% block content %}
+{% if notice == "archived" %}<div class="flash ok">首次归档已完成，整升日档已保存。</div>{% endif %}
+{% if notice == "applied" %}<div class="flash ok">补正已发布，现行档已换为新版本。{% if applied_from %}本次从第 {{ applied_from }} 分钟起覆盖至日末。{% endif %}</div>{% endif %}
+{% if notice == "cancelled" %}<div class="flash ok">已取消补正方案，现行档未改变。</div>{% endif %}
+{% if notice == "sample_loaded" %}<div class="flash ok">样例已载入。</div>{% endif %}
+{% if error %}<div class="flash bad">{{ error }}</div>{% endif %}
+
+<p><a href="/">← 返回总览</a></p>
+<h1>{{ day.date }} 现行日档 <span class="pill">v{{ day.version }}</span></h1>
+
+<section class="panel">
+  <div class="stats">
+    <div><span class="label">分钟范围</span><strong>{{ day.first_minute }}–{{ day.last_minute }}</strong></div>
+    <div><span class="label">分钟数</span><strong>{{ day.minute_count }}</strong></div>
+    <div><span class="label">整升合计</span><strong>{{ day.total_l }} L</strong></div>
+    <div><span class="label">归档核对</span><strong class="{{ 'ok-text' if day.verified_ok else 'bad-text' }}">{{ "通过" if day.verified_ok else "未通过" }}</strong></div>
+    <div><span class="label">原表指纹</span><strong class="mono">{{ day.source_sha256[:12] }}</strong></div>
+  </div>
+  <p class="hint">归档库只保存整升。上传毫升原表时已在内存中核对全部连续时段，偏差严格小于 1000 毫升后才写入整升结果。</p>
+  <div class="row">
+    <a class="button" href="/day/{{ day.date }}/download">下载整日整升档 CSV</a>
+    {% if latest and latest.from_minute is not none %}
+    <a class="button secondary" href="/day/{{ day.date }}/download?from_minute={{ latest.from_minute }}">下载最近补正起点（第 {{ latest.from_minute }} 分钟）至日末</a>
+    {% endif %}
+  </div>
+</section>
+
+<section class="panel">
+  <h1>补正</h1>
+  <p class="hint">上传与现行档同一批分钟的全表。系统在满足误差要求的整升结果中，尽量多保留现行档开头连续不变的分钟，并标出最晚重发起点。</p>
+  <form method="post" action="/day/{{ day.date }}/correct" enctype="multipart/form-data" class="grid-form">
+    <label>同一批分钟的全表 CSV
+      <input type="file" name="csv_file" accept=".csv,text/csv" required>
+    </label>
+    <button type="submit">核对并生成补正方案</button>
+  </form>
+  <p class="hint">样例补正表：<a href="/samples/correction.csv">correction-{{ sample_date }}.csv</a>（同一批 1440 分钟，第 900 分钟起数值有调整）。</p>
+</section>
+
+{% if latest %}
+<section class="panel">
+  <h1>最近一次补正记录</h1>
+  <table class="table">
+    <thead><tr><th>版本</th><th>最晚重发起点</th><th>整升变动分钟</th><th>整升合计</th><th>时间</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>v{{ latest.old_version }} → v{{ latest.new_version }}</td>
+        <td>{% if latest.from_minute is not none %}第 {{ latest.from_minute }} 分钟起至日末{% else %}整升档无变化（仅记录原表更新）{% endif %}</td>
+        <td>{{ latest.changed_minutes }}</td>
+        <td>{{ latest.total_l }} L</td>
+        <td>{{ latest.created_at }}</td>
+      </tr>
+    </tbody>
+  </table>
+  {% if revisions | length > 1 %}
+  <details>
+    <summary>全部补正记录（{{ revisions | length }} 次）</summary>
+    <table class="table">
+      <thead><tr><th>版本</th><th>起点</th><th>整升变动</th><th>整升合计</th><th>时间</th></tr></thead>
+      <tbody>
+      {% for r in revisions %}
+        <tr><td>v{{ r.old_version }} → v{{ r.new_version }}</td><td>{{ r.from_minute }}</td><td>{{ r.changed_minutes }}</td><td>{{ r.total_l }}</td><td>{{ r.created_at }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </details>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="panel">
+  <h1>现行档分钟明细</h1>
+  <p class="hint">共 {{ day.minute_count }} 行，展示前 24 行。归档只含整升；完整数据请下载 CSV。</p>
+  <table class="table">
+    <thead><tr><th>分钟</th><th>整升</th></tr></thead>
+    <tbody>
+    {% for row in day.rows[:24] %}
+      <tr>
+        <td>{{ row.minute }}</td>
+        <td class="num">{{ row.litre }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

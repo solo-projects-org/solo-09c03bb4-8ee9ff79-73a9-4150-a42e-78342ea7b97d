@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}归档总览 · 污水排放整升日档{% endblock %}
+{% block content %}
+{% if notice %}<div class="flash ok">{{ notice | replace("sample_loaded", "样例已载入") | replace("archived", "首次归档已完成") | replace("applied", "补正已发布") | replace("cancelled", "已取消补正方案") | replace("sample_exists", "该日已有归档，未重复载入") }}</div>{% endif %}
+{% if error %}<div class="flash bad">{{ error }}</div>{% endif %}
+
+<section class="panel">
+  <h1>首次归档</h1>
+  <p class="hint">上传单日 CSV：分钟号连续、排水量为非负整数毫升。系统换算并核对全部连续时段后，只把整升结果写入归档库。</p>
+  <form method="post" action="/archive" enctype="multipart/form-data" class="grid-form">
+    <label>归档日期（CSV 无日期列时必填）
+      <input type="date" name="date_value" value="">
+    </label>
+    <label>单日 CSV
+      <input type="file" name="csv_file" accept=".csv,text/csv" required>
+    </label>
+    <button type="submit">生成整升日档</button>
+  </form>
+  <p class="hint">CSV 可为两列 <code>minute,ml</code>，或三列 <code>date,minute,ml</code>；也接受 <code>分钟号,排水量</code>、<code>日期,分钟,毫升</code>。分钟号须从当日某一分钟起连续升序。</p>
+</section>
+
+<section class="panel">
+  <h1>试用样例</h1>
+  <p class="hint">样例日为 {{ sample_date }}，共 1440 分钟。先载入首次归档，再到日档页上传补正样表，可看到最晚重发起点与差异。</p>
+  <div class="row">
+    <form method="post" action="/samples/load">
+      <button type="submit" {% if sample_exists %}disabled{% endif %}>载入样例首次归档</button>
+    </form>
+    <a class="button secondary" href="/samples/initial.csv" download>下载样例原表</a>
+    <a class="button secondary" href="/samples/correction.csv" download>下载样例补正表</a>
+  </div>
+  {% if sample_exists %}<p class="hint">已存在 {{ sample_date }} 的归档，请直接进入该日档试补正。</p>{% endif %}
+</section>
+
+<section class="panel">
+  <h1>现行日档</h1>
+  {% if summaries %}
+  <table class="table">
+    <thead>
+      <tr><th>日期</th><th>版本</th><th>分钟</th><th>整升合计</th><th>归档核对</th><th></th></tr>
+    </thead>
+    <tbody>
+    {% for s in summaries %}
+      <tr>
+        <td><a href="/day/{{ s.day.date }}">{{ s.day.date }}</a></td>
+        <td>v{{ s.day.version }}</td>
+        <td>{{ s.day.minute_count }}</td>
+        <td class="num">{{ s.day.total_l }} L</td>
+        <td class="{{ 'ok-text' if s.day.verified_ok else 'bad-text' }}">{% if s.day.verified_ok %}全部连续时段已核对，偏差 &lt; 1000 ml{% else %}未通过核对{% endif %}</td>
+        <td><a class="button small" href="/day/{{ s.day.date }}/download">下载整日</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="hint">还没有归档。可先载入试用样例。</p>
+  {% endif %}
+</section>
+{% endblock %}

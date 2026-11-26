@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}补正核对 · {{ day.date }}{% endblock %}
+{% block content %}
+<p><a href="/day/{{ day.date }}">← 返回 {{ day.date }} 日档</a></p>
+<h1>补正核对：{{ day.date }}</h1>
+
+{% if source_same %}
+<div class="flash ok">
+  <strong>全表不变，无需重发。</strong>
+  上传的毫升全表与现行档原表完全一致，整升结果无需变化，确认按钮已停用。
+</div>
+{% elif archive_same %}
+<div class="flash ok">
+  <strong>整升档无需重发。</strong>
+  上传的毫升原表与现行档记录的原表指纹不同，但现行整升档仍满足全部误差要求，整升数据无需变化。
+  如需把这次原表数值记入日档，可确认“仅更新原表记录”；否则取消即可。
+</div>
+{% else %}
+<div class="flash warn">
+  <strong>最晚重发起点：第 {{ preview.p_minute }} 分钟。</strong>
+  {% if preview.p_index > 0 %}
+  第 {{ day.first_minute }}–{{ day.rows[preview.p_index - 1].minute }} 分钟的现行整升值可全部保留；
+  {% else %}
+  现行档开头没有可保留的分钟；
+  {% endif %}
+  从第 {{ preview.p_minute }} 分钟起至日末（第 {{ day.last_minute }} 分钟）需要重发。
+</div>
+{% endif %}
+
+<section class="panel">
+  <h1>核对结果</h1>
+  <div class="stats">
+    <div><span class="label">保留的现行档前缀</span><strong>{{ kept }} / {{ total_minutes }} 分钟</strong></div>
+    <div><span class="label">整升值实际变动行</span><strong>{{ archive_changed_count }}</strong></div>
+    <div><span class="label">整升合计</span><strong>{{ old_total_l }} L → {{ new_total_l }} L</strong></div>
+    <div><span class="label">上传原表总毫升</span><strong>{{ new_total_ml }} ml</strong></div>
+    <div><span class="label">最大连续时段差</span><strong class="ok-text">{{ preview.verification.max_interval_error_ml }} ml</strong></div>
+  </div>
+  <p class="hint">{{ preview.verification.message }}（要求严格小于 1000 毫升；本方案已对全部连续时段逐段核对）</p>
+</section>
+
+{% if candidate_changes %}
+<section class="panel">
+  <h1>整升值变化预览</h1>
+  <p class="hint">最多展示前 {{ candidate_changes | length }} 行变动。</p>
+  <table class="table">
+    <thead><tr><th>分钟</th><th>新毫升</th><th>原整升</th><th>新整升</th></tr></thead>
+    <tbody>
+    {% for c in candidate_changes %}
+      <tr>
+        <td>{{ c.minute }}</td>
+        <td class="num">{{ c.new_ml }}</td>
+        <td class="num">{{ c.old_l }}</td>
+        <td class="num">{{ c.new_l }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<section class="panel">
+  <h1>确认换档</h1>
+  {% if source_same %}
+  <p class="hint">上传全表与现行档原表一致，确认不会改变任何数据，按钮已停用。</p>
+  {% elif archive_same %}
+  <p class="hint">整升档不会变化；确认后仅更新原表指纹与版本号。</p>
+  {% endif %}
+  <form method="post" action="/preview/{{ preview.id }}/confirm" class="row">
+    <button type="submit" {% if source_same %}disabled{% endif %}>{% if archive_same and not source_same %}确认仅更新原表记录{% else %}确认换档并发布{% endif %}</button>
+  </form>
+  <form method="post" action="/preview/{{ preview.id }}/cancel" class="row">
+    <button type="submit" class="secondary">取消，不改变现行档</button>
+  </form>
+  <p class="hint">确认前若现行档已被其他操作改变，系统会提示重算，且不会发布旧方案。</p>
+</section>
+{% endblock %}
