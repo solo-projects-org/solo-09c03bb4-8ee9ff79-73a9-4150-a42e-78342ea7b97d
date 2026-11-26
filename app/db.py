@@ -300,7 +300,38 @@ def save_preview(
     source_sha256: str,
     file_name: str | None,
 ) -> Preview:
+    """Persist a freshly built plan as the active preview for the day.
+
+    Concurrency contract:
+
+    * The current day is re-read inside the same ``BEGIN IMMEDIATE``
+      transaction that replaces the preview.  If the archive changed since
+      the caller loaded ``day`` (another confirmation landed while the CSV
+      was being validated/planned), :class:`StalePreview` is raised **before**
+      any row is deleted, so a still-valid pending plan survives.
+    * Two plans built against the same current version both pass the guard;
+      the last writer to commit wins, as required.
+    * The returned :class:`Preview` is built from the arguments instead of
+      being re-read after commit: a concurrent, equally valid save may
+      supersede this id in the instant after commit, and that must not turn
+      the caller's response into a 500.  Confirming the superseded id is
+      refused later with a recalculation prompt.
+    """
+    now = utc_now()
+    base_fingerprint = fingerprint(day)
     with transaction(conn):
+        current_row = conn.execute(
+            "SELECT * FROM days WHERE date = ?", (day.date,)
+        ).fetchone()
+        if current_row is None:
+            raise StalePreview("该日归档在核对保存前已被删除，请重新上传核对")
+        current_day = _day_from_row(conn, current_row)
+        if (
+            current_day.version != day.version
+            or fingerprint(current_day) != base_fingerprint
+        ):
+            raise StalePreview("现行档在核对期间已发生变化")
+
         # Only one active plan per day; older previews are superseded.
         conn.execute("DELETE FROM previews WHERE day_date = ?", (day.date,))
         conn.execute(
@@ -312,7 +343,7 @@ def save_preview(
                 preview_id,
                 day.date,
                 day.version,
-                fingerprint(day),
+                base_fingerprint,
                 plan.p_index,
                 plan.p_minute,
                 json.dumps(list(minutes)),
@@ -333,12 +364,25 @@ def save_preview(
                     ensure_ascii=False,
                 ),
                 file_name,
-                utc_now(),
+                now,
             ),
         )
-    preview = load_preview(conn, preview_id)
-    assert preview is not None
-    return preview
+
+    return Preview(
+        id=preview_id,
+        day_date=day.date,
+        base_version=day.version,
+        base_fingerprint=base_fingerprint,
+        p_index=plan.p_index,
+        p_minute=plan.p_minute,
+        minutes=list(minutes),
+        new_archive=list(plan.new_archive),
+        new_source_sha256=source_sha256,
+        new_total_l=sum(plan.new_archive),
+        verification=plan.verification,
+        file_name=file_name,
+        created_at=now,
+    )
 
 
 def _verification_from_json(raw: str) -> Verification:
@@ -355,10 +399,7 @@ def _verification_from_json(raw: str) -> Verification:
     )
 
 
-def load_preview(conn: sqlite3.Connection, preview_id: str) -> Preview | None:
-    row = conn.execute("SELECT * FROM previews WHERE id = ?", (preview_id,)).fetchone()
-    if row is None:
-        return None
+def _preview_from_row(row: sqlite3.Row) -> Preview:
     return Preview(
         id=row["id"],
         day_date=row["day_date"],
@@ -374,6 +415,25 @@ def load_preview(conn: sqlite3.Connection, preview_id: str) -> Preview | None:
         file_name=row["file_name"],
         created_at=row["created_at"],
     )
+
+
+def load_preview(conn: sqlite3.Connection, preview_id: str) -> Preview | None:
+    row = conn.execute("SELECT * FROM previews WHERE id = ?", (preview_id,)).fetchone()
+    return None if row is None else _preview_from_row(row)
+
+
+def load_active_preview(conn: sqlite3.Connection, date: str) -> Preview | None:
+    """Return the current pending plan for a day, if any.
+
+    Saving a plan deletes the other rows for the day, so this is normally a
+    single row; the ordering only guards against unusual databases.
+    """
+    row = conn.execute(
+        "SELECT * FROM previews WHERE day_date = ? "
+        "ORDER BY created_at DESC, id DESC LIMIT 1",
+        (date,),
+    ).fetchone()
+    return None if row is None else _preview_from_row(row)
 
 
 class StalePreview(Exception):

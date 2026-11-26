@@ -39,6 +39,32 @@
   <p class="hint">样例补正表：<a href="/samples/correction.csv">correction-{{ sample_date }}.csv</a>（同一批 1440 分钟，第 900 分钟起数值有调整）。</p>
 </section>
 
+{% if active_preview %}
+<section class="panel pending-kept">
+  <h1>待确认补正方案</h1>
+  <p class="hint">
+    已有一份核对完成、尚未发布的方案（编号 <code>{{ active_preview.id[:8] }}</code>，
+    生成于 {{ active_preview.created_at }}{% if active_preview.file_name %}，文件 {{ active_preview.file_name }}{% endif %}）。
+    再次上传核对时，只要现行档未变，后保存的有效方案会替换本方案；上传与现行原表相同的 CSV 或核对期间现行档已变，则会保留本方案。
+  </p>
+  <div class="stats">
+    <div><span class="label">最晚重发起点</span><strong>{% if active_preview.p_minute is not none %}第 {{ active_preview.p_minute }} 分钟{% else %}无（仅更新原表记录）{% endif %}</strong></div>
+    <div><span class="label">基于版本</span><strong>v{{ active_preview.base_version }}</strong></div>
+    <div><span class="label">整升合计</span><strong>{{ active_preview.new_total_l }} L</strong></div>
+    <div><span class="label">最大连续时段差</span><strong class="ok-text">{{ active_preview.verification.max_interval_error_ml }} ml</strong></div>
+  </div>
+  <div class="row">
+    <form method="post" action="/preview/{{ active_preview.id }}/confirm">
+      <button type="submit">{% if active_preview.p_minute is none %}确认仅更新原表记录{% else %}确认换档并发布{% endif %}</button>
+    </form>
+    <form method="post" action="/preview/{{ active_preview.id }}/cancel">
+      <button type="submit" class="secondary">取消方案</button>
+    </form>
+  </div>
+  <p class="hint">旧页面上的方案若已被替换或因现行档变化而失效，确认时会提示重算，不会报系统错误。</p>
+</section>
+{% endif %}
+
 {% if latest %}
 <section class="panel">
   <h1>最近一次补正记录</h1>

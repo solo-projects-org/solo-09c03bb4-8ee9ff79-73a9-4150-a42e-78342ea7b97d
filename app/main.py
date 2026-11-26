@@ -191,12 +191,14 @@ def create_app(db_path: str | None = None) -> FastAPI:
             )
         summary = day_summary(conn, day)
         latest = summary["revisions"][0] if summary["revisions"] else None
+        active_preview = db.load_active_preview(conn, day_date)
         return render(
             request,
             "day.html",
             {
                 **summary,
                 "latest": latest,
+                "active_preview": active_preview,
                 "notice": request.query_params.get("notice"),
                 "error": request.query_params.get("error"),
                 "applied_from": request.query_params.get("from"),
@@ -301,6 +303,9 @@ def create_app(db_path: str | None = None) -> FastAPI:
                 status_code=400,
             )
 
+        source_sha = source_fingerprint(parsed.minutes, parsed.ml)
+        source_same = source_sha == day.source_sha256
+
         try:
             plan = build_correction_plan(day.litres, parsed.ml, parsed.minutes)
         except AlgorithmError as exc:
@@ -311,37 +316,92 @@ def create_app(db_path: str | None = None) -> FastAPI:
                 status_code=400,
             )
 
-        source_sha = source_fingerprint(parsed.minutes, parsed.ml)
-        source_same = source_sha == day.source_sha256
         archive_same = list(plan.new_archive) == day.litres
+        # The pending plan that exists before this request writes anything.
+        # Both the "same source table" and the "archive changed while this
+        # request was computing" paths deliberately preserve it.
+        existing_preview = db.load_active_preview(conn, day.date)
+
+        view_context = {
+            "day": day,
+            "source_same": source_same,
+            "archive_same": archive_same,
+            "kept": plan.p_index,
+            "total_minutes": len(day.rows),
+            "archive_changed_count": sum(
+                1 for old, new in zip(day.litres, plan.new_archive) if old != new
+            ),
+            "candidate_changes": _candidate_changes(day, plan, limit=12),
+            "new_total_l": sum(plan.new_archive),
+            "old_total_l": sum(day.litres),
+            "new_total_ml": sum(parsed.ml),
+        }
+
+        if source_same:
+            # The upload is byte-for-byte the current source table.  Do not
+            # write (and therefore do not replace any existing pending plan);
+            # render a non-persistent, permanently disabled plan view.
+            transient_preview = db.Preview(
+                id=uuid.uuid4().hex,
+                day_date=day.date,
+                base_version=day.version,
+                base_fingerprint=db.fingerprint(day),
+                p_index=plan.p_index,
+                p_minute=plan.p_minute,
+                minutes=list(parsed.minutes),
+                new_archive=list(plan.new_archive),
+                new_source_sha256=source_sha,
+                new_total_l=sum(plan.new_archive),
+                verification=plan.verification,
+                file_name=filename,
+                created_at=db.utc_now(),
+            )
+            return render(
+                request,
+                "preview.html",
+                {
+                    **view_context,
+                    "preview": transient_preview,
+                    "retained_preview": existing_preview,
+                },
+            )
 
         preview_id = uuid.uuid4().hex
-        preview = db.save_preview(
-            conn,
-            preview_id,
-            day,
-            plan,
-            parsed.minutes,
-            source_sha,
-            filename,
-        )
+        try:
+            preview = db.save_preview(
+                conn,
+                preview_id,
+                day,
+                plan,
+                parsed.minutes,
+                source_sha,
+                filename,
+            )
+        except db.StalePreview as exc:
+            # The current archive moved while this CSV was being checked and
+            # planned.  save_preview re-checks before deleting anything, so
+            # the pending plan produced from the newer state is still there.
+            return render(
+                request,
+                "error.html",
+                {
+                    "title": "现行档已变化，请重算",
+                    "message": (
+                        f"{exc.reason}。本次核对结果没有保存，也没有覆盖已有的待确认方案。"
+                        "请重新上传同一批分钟的全表生成新方案。"
+                    ),
+                    "day_date": day.date,
+                    "active_preview": db.load_active_preview(conn, day.date),
+                },
+                status_code=409,
+            )
         return render(
             request,
             "preview.html",
             {
-                "day": day,
+                **view_context,
                 "preview": preview,
-                "source_same": source_same,
-                "archive_same": archive_same,
-                "kept": plan.p_index,
-                "total_minutes": len(day.rows),
-                "archive_changed_count": sum(
-                    1 for old, new in zip(day.litres, plan.new_archive) if old != new
-                ),
-                "candidate_changes": _candidate_changes(day, plan, limit=12),
-                "new_total_l": sum(plan.new_archive),
-                "old_total_l": sum(day.litres),
-                "new_total_ml": sum(parsed.ml),
+                "retained_preview": None,
             },
         )
 
@@ -378,6 +438,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
                         "请重新上传同一批分钟的全表生成新方案。"
                     ),
                     "day_date": preview.day_date,
+                    "active_preview": db.load_active_preview(conn, preview.day_date),
                 },
                 status_code=409,
             )

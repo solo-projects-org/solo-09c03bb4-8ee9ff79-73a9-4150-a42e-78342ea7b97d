@@ -4,6 +4,21 @@
 <section class="panel narrow">
   <h1>{{ title }}</h1>
   <div class="flash bad">{{ message }}</div>
+  {% if active_preview %}
+  <div class="flash ok">
+    已有待确认方案已保留：最晚重发起点
+    <strong>{% if active_preview.p_minute is not none %}第 {{ active_preview.p_minute }} 分钟{% else %}无（仅更新原表记录）{% endif %}</strong>
+    （v{{ active_preview.base_version }} 基础，{{ active_preview.created_at }} 生成），仍可确认。
+  </div>
+  <div class="row">
+    <form method="post" action="/preview/{{ active_preview.id }}/confirm">
+      <button type="submit">确认保留的方案并发布</button>
+    </form>
+    <form method="post" action="/preview/{{ active_preview.id }}/cancel">
+      <button type="submit" class="secondary">取消该方案</button>
+    </form>
+  </div>
+  {% endif %}
   <div class="row">
     {% if day_date %}<a class="button" href="/day/{{ day_date }}">返回该日档</a>{% endif %}
     <a class="button secondary" href="/">返回总览</a>
